@@ -1,0 +1,183 @@
+//@version=5
+indicator("XAUUSD 5M Trading Strategy Indicator", shorttitle="XAU Strategy", overlay=true, max_boxes_count=500, max_lines_count=500)
+
+// ============================================
+// INPUT PARAMETERS
+// ============================================
+
+// Pivot Detection
+pivotLookback = input.int(2, title="Pivot Lookback Period", minval=1, maxval=5)
+
+// RSI Settings
+rsiLength = input.int(14, title="RSI Length", minval=5)
+rsiDivBullish = input.int(20, title="RSI Bullish Level", minval=5, maxval=50)
+rsiDivBearish = input.int(80, title="RSI Bearish Level", minval=50, maxval=95)
+
+// ATR Settings
+atrLength = input.int(14, title="ATR Length", minval=5)
+atrMultiplier = input.float(1.5, title="ATR Multiplier", minval=0.5, maxval=3.0, step=0.1)
+
+// Fibonacci Levels
+showFibonacci = input.bool(true, title="Show Fibonacci Levels")
+fib618Level = input.float(0.618, title="Fibonacci 0.618 Level")
+fib5Level = input.float(0.5, title="Fibonacci 0.5 Level")
+
+// Alerts
+showAlerts = input.bool(true, title="Show Alerts")
+showLabels = input.bool(true, title="Show Entry/Exit Labels")
+
+// ============================================
+// CALCULATIONS
+// ============================================
+
+// RSI
+rsi = ta.rsi(close, rsiLength)
+
+// ATR
+atr = ta.atr(atrLength)
+atrValue = atr * atrMultiplier
+
+// Detect Higher Highs (Potential Sell Signal)
+isHigherHigh = high[pivotLookback] > high[pivotLookback + 1] and high[pivotLookback] > high[pivotLookback - 1]
+highestHigh = ta.highest(high, pivotLookback * 2)
+
+// Detect Lower Lows (Potential Buy Signal)
+isLowerLow = low[pivotLookback] < low[pivotLookback + 1] and low[pivotLookback] < low[pivotLookback - 1]
+lowestLow = ta.lowest(low, pivotLookback * 2)
+
+// RSI Divergence Detection
+rsiHigher = rsi[pivotLookback] > rsi[pivotLookback + 1]
+rsiLower = rsi[pivotLookback] < rsi[pivotLookback - 1]
+
+// Bearish Divergence: Higher High on Price but Lower High on RSI
+bearishDiv = isHigherHigh and rsi[pivotLookback] < 80 and not rsiHigher
+
+// Bullish Divergence: Lower Low on Price but Higher Low on RSI
+bullishDiv = isLowerLow and rsi[pivotLookback] > 20 and rsiLower
+
+// ============================================
+// PIVOT POINTS & ENTRY/EXIT CALCULATIONS
+// ============================================
+
+var float lastPivotHigh = na
+var float lastPivotLow = na
+var float fibEntryLevel = na
+var float fibExitLevel = na
+var string tradeType = na
+var bool inTrade = false
+
+// Detect New Highs (SELL Signal)
+if isHigherHigh
+    lastPivotHigh := high[pivotLookback]
+    tradeType := "SELL"
+    fibEntryLevel := lastPivotHigh * (1 - fib618Level)  // Fibonacci Retracement
+    fibExitLevel := lastPivotHigh * (1 - fib5Level)
+
+// Detect New Lows (BUY Signal)
+if isLowerLow
+    lastPivotLow := low[pivotLookback]
+    tradeType := "BUY"
+    fibEntryLevel := lastPivotLow + (high[pivotLookback * 2] - lastPivotLow) * fib618Level
+    fibExitLevel := lastPivotLow + (high[pivotLookback * 2] - lastPivotLow) * fib5Level
+
+// ============================================
+// ENTRY SIGNALS
+// ============================================
+
+entrySignal = false
+entryType = ""
+
+// SELL Entry: Price near 0 level after higher high + RSI confirmation
+if tradeType == "SELL" and bearishDiv
+    if close <= lastPivotHigh and close >= (lastPivotHigh - atrValue * 2)
+        entrySignal := true
+        entryType := "SELL"
+        inTrade := true
+
+// BUY Entry: Price near 0 level after lower low + RSI confirmation
+if tradeType == "BUY" and bullishDiv
+    if close >= lastPivotLow and close <= (lastPivotLow + atrValue * 2)
+        entrySignal := true
+        entryType := "BUY"
+        inTrade := true
+
+// ============================================
+// EXIT SIGNALS (Fibonacci Targets)
+// ============================================
+
+exitSignal = false
+exitReason = ""
+
+if inTrade
+    if entryType == "SELL" and close <= fibExitLevel
+        exitSignal := true
+        exitReason := "EXIT: 0.618 Target"
+        inTrade := false
+    
+    if entryType == "BUY" and close >= fibExitLevel
+        exitSignal := true
+        exitReason := "EXIT: 0.618 Target"
+        inTrade := false
+
+// ============================================
+// PLOTTING
+// ============================================
+
+// Plot Pivot Points
+plotshape(isHigherHigh, title="Higher High", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
+plotshape(isLowerLow, title="Lower Low", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
+
+// Plot RSI
+plot(rsi, title="RSI", color=color.blue, linewidth=2)
+hline(80, "RSI 80", color=color.red, linestyle=hline.dashed)
+hline(20, "RSI 20", color=color.green, linestyle=hline.dashed)
+
+// Plot ATR
+plot(atr, title="ATR", color=color.orange, linewidth=1)
+
+// Plot Fibonacci Entry Level
+if not na(fibEntryLevel)
+    line.new(bar_index - 20, fibEntryLevel, bar_index, fibEntryLevel, color=color.blue, width=2, style=line.solid, extend=extend.right)
+
+// Plot Fibonacci Exit Level
+if not na(fibExitLevel)
+    line.new(bar_index - 20, fibExitLevel, bar_index, fibExitLevel, color=color.purple, width=2, style=line.solid, extend=extend.right)
+
+// Entry/Exit Labels
+if entrySignal and showLabels
+    label.new(bar_index, high + atr, "ENTRY: " + entryType, color=color.new(color.green, 60), textcolor=color.white, style=label.style_label_down)
+
+if exitSignal and showLabels
+    label.new(bar_index, low - atr, exitReason, color=color.new(color.red, 60), textcolor=color.white, style=label.style_label_up)
+
+// ============================================
+// ALERTS
+// ============================================
+
+if entrySignal and showAlerts
+    alert("🟢 ENTRY SIGNAL: " + entryType + " | Price: " + str.tostring(close), alert.freq_once_per_bar_close)
+
+if exitSignal and showAlerts
+    alert("🔴 EXIT SIGNAL: " + exitReason + " | Price: " + str.tostring(close), alert.freq_once_per_bar_close)
+
+// ============================================
+// STATISTICS (in data window)
+// ============================================
+
+var int totalTrades = 0
+var float totalProfit = 0
+var int winTrades = 0
+
+if entrySignal
+    totalTrades += 1
+
+if exitSignal and entrySignal
+    if entryType == "BUY" and close > lastPivotLow
+        winTrades += 1
+        totalProfit += (close - lastPivotLow)
+    if entryType == "SELL" and close < lastPivotHigh
+        winTrades += 1
+        totalProfit += (lastPivotHigh - close)
+
+// Display Statistics
+f_stat = "Trades: " + str.tostring(totalTrades) + " | Wins: " + str.tostring(winTrades) + " | Profit: " + str.tostring(totalProfit, "#.##")
